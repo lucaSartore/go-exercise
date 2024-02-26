@@ -176,7 +176,8 @@ func (m *Matrix) get(x uint, y uint) (MathObject, error) {
 	if y >= m.size_y {
 		return nil, errors.New("index Y out of range")
 	}
-	return &m.value[x][y], nil
+	to_return := m.value[x][y]
+	return &to_return, nil
 }
 func (m *Matrix) set(x uint, y uint, value MathObject) error {
 	if x >= m.size_x {
@@ -229,7 +230,8 @@ func (m *ComplexMatrix) get(x uint, y uint) (MathObject, error) {
 	if y >= m.size_y {
 		return nil, errors.New("index Y out of range")
 	}
-	return &m.value[x][y], nil
+	to_return := m.value[x][y]
+	return &to_return, nil
 }
 func (m *ComplexMatrix) set(x uint, y uint, value MathObject) error {
 	if x >= m.size_x {
@@ -284,6 +286,79 @@ func MatrixToString(m MatrixObject) string {
 	return builder.String()
 }
 
+func MultiplyMatrix(m1 MatrixObject, m2 MatrixObject) (MatrixObject, error) {
+	if m1.get_size_x() != m2.get_size_y() {
+		return nil, errors.New("mismatch size")
+	}
+	if m1.get_size_x() == 0 ||
+		m1.get_size_y() == 0 ||
+		m2.get_size_x() == 0 ||
+		m2.get_size_y() == 0 {
+		return nil, errors.New("Matrix size can't be zero")
+	}
+
+	var new_matrix Matrix
+	var new_complex_matrix ComplexMatrix
+
+	switch new_m1 := m1.(type) {
+	case *Matrix:
+		new_matrix = makeMatrix(m2.get_size_x(), new_m1.get_size_y())
+	case *ComplexMatrix:
+		new_complex_matrix = makeComplexMatrix(m2.get_size_x(), new_m1.get_size_y())
+	default:
+		return nil, errors.New("unknown matrix type")
+	}
+
+	var return_matrix MatrixObject
+	if new_matrix.size_x != 0 {
+		return_matrix = &new_matrix
+	} else {
+		return_matrix = &new_complex_matrix
+	}
+
+	for x := uint(0); x < return_matrix.get_size_x(); x++ {
+		for y := uint(0); y < return_matrix.get_size_y(); y++ {
+
+			cumulative, err := m1.get(0, y)
+			if err != nil {
+				return nil, err
+			}
+			other, err := m2.get(x, 0)
+			if err != nil {
+				return nil, err
+			}
+			err = cumulative.mul(other)
+			if err != nil {
+				return nil, err
+			}
+
+			for j := uint(1); j < m1.get_size_x(); j++ {
+				c1, err := m1.get(j, y)
+				if err != nil {
+					return nil, err
+				}
+				c2, err := m2.get(x, j)
+				if err != nil {
+					return nil, err
+				}
+				err = c1.mul(c2)
+				if err != nil {
+					return nil, err
+				}
+				err = cumulative.sum(c1)
+				if err != nil {
+					return nil, err
+				}
+			}
+			err = return_matrix.set(x, y, cumulative)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return return_matrix, nil
+}
+
 func main() {
 
 	fmt.Println("################# Number Testing #####################")
@@ -314,7 +389,7 @@ func main() {
 	fmt.Printf("%v\n", err)
 	fmt.Printf("%v\n", i2)
 
-	fmt.Println("################# Matrix Testing #####################")
+	fmt.Println("################# Matrix Print Testing #####################")
 
 	m := makeMatrix(3, 3)
 	m.set(2, 0, &Number{100})
@@ -324,4 +399,33 @@ func main() {
 	m2.set(3, 1, &ComplexNumber{1, -4})
 	fmt.Println()
 	fmt.Printf("%v", m2)
+
+	fmt.Println("################# Matrix Multiplication Testing #####################")
+
+	m3 := makeMatrix(3, 2)
+
+	m3.set(0, 0, &Number{1})
+	m3.set(1, 0, &Number{2})
+	m3.set(2, 0, &Number{3})
+	m3.set(0, 1, &Number{4})
+	m3.set(1, 1, &Number{5})
+	m3.set(2, 1, &Number{6})
+
+	m4 := makeMatrix(4, 3)
+	m4.set(0, 1, &Number{1})
+	m4.set(1, 0, &Number{2})
+	m4.set(2, 1, &Number{3})
+	m4.set(3, 2, &Number{4})
+
+	m5, err := MultiplyMatrix(&m3, &m4)
+
+	if err != nil {
+		fmt.Printf("error: %v", err)
+	} else {
+		fmt.Printf("%v", m3)
+		fmt.Print("\n x \n")
+		fmt.Printf("%v", m4)
+		fmt.Print("\n = \n")
+		fmt.Printf("%v", m5)
+	}
 }
