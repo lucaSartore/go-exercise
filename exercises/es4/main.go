@@ -80,7 +80,38 @@ func GetData() ([]DataRecord, error) {
 
 type FilteredDataRecord struct {
 	data   DataRecord
-	waight float32
+	weight float32
+}
+
+func MakeFilterDataRecord(dr DataRecord, start time.Time, finish time.Time) FilteredDataRecord {
+
+	var weight float32
+
+	total_seconds := dr.Finish.Unix() - dr.Start.Unix()
+	time_before := start.Unix() - dr.Start.Unix()
+	if time_before < 0 {
+		time_before = 0
+	}
+	time_after := dr.Finish.Unix() - finish.Unix()
+	if time_after < 0 {
+		time_after = 0
+	}
+	time_outside := time_before + time_after
+
+	if total_seconds == 0 {
+		if time_outside == 0 {
+			weight = 1
+		} else {
+			weight = 0
+		}
+	} else {
+		weight = float32(total_seconds-time_outside) / float32(total_seconds)
+	}
+
+	return FilteredDataRecord{
+		data:   dr,
+		weight: weight,
+	}
 }
 
 type Manager struct {
@@ -91,6 +122,36 @@ type Manager struct {
 	data     []FilteredDataRecord
 	chan_in  chan DataRecord
 	chan_out chan float32
+}
+
+func MakeManager(id int, day int, start time.Time, finish time.Time) Manager {
+	return Manager{
+		ID:       id,
+		Day:      day,
+		Start:    start,
+		Finish:   finish,
+		chan_in:  make(chan DataRecord),
+		chan_out: make(chan float32),
+	}
+}
+
+func (manager *Manager) PushRecord(record DataRecord) {
+	filtered_record := MakeFilterDataRecord(record, manager.Start, manager.Finish)
+	manager.data = append(manager.data, filtered_record)
+}
+
+func (manager *Manager) GetOutput() float32 {
+	s := float32(0)
+	for _, v := range manager.data {
+		s += v.weight * float32(v.data.X)
+	}
+	return s
+}
+
+type ManagerKeeper struct {
+	Days     int
+	IDs      int
+	Managers [][]Manager
 }
 
 func main() {
