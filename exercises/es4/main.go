@@ -102,7 +102,7 @@ func MakeFilterDataRecord(dr DataRecord, start time.Time, finish time.Time) Filt
 		if time_outside == 0 {
 			weight = 1
 		} else {
-			weight = 0
+			panic("the passed data are outside this manager's day range")
 		}
 	} else {
 		weight = float32(total_seconds-time_outside) / float32(total_seconds)
@@ -116,7 +116,7 @@ func MakeFilterDataRecord(dr DataRecord, start time.Time, finish time.Time) Filt
 
 type Manager struct {
 	ID       int
-	Day      int
+	Day      Date
 	Start    time.Time
 	Finish   time.Time
 	data     []FilteredDataRecord
@@ -124,7 +124,7 @@ type Manager struct {
 	chan_out chan float32
 }
 
-func MakeManager(id int, day int, start time.Time, finish time.Time) Manager {
+func MakeManager(id int, day Date, start time.Time, finish time.Time) Manager {
 	return Manager{
 		ID:       id,
 		Day:      day,
@@ -135,11 +135,13 @@ func MakeManager(id int, day int, start time.Time, finish time.Time) Manager {
 	}
 }
 
-func (manager *Manager) PushRecord(record DataRecord) {
+func (manager *Manager) PushRecord(record DataRecord) *FilteredDataRecord {
 	filtered_record := MakeFilterDataRecord(record, manager.Start, manager.Finish)
 	manager.data = append(manager.data, filtered_record)
+	return &manager.data[len(manager.data)-1]
 }
 
+// get the output (synchronous)
 func (manager *Manager) GetOutput() float32 {
 	s := float32(0)
 	for _, v := range manager.data {
@@ -148,13 +150,118 @@ func (manager *Manager) GetOutput() float32 {
 	return s
 }
 
-type ManagerKeeper struct {
-	Days     int
-	IDs      int
-	Managers [][]Manager
+// function intended to be called as a go routine to compute the data inside the manager
+func (manager *Manager) Compute() {
+	s := float32(0)
+	for item := range manager.chan_in {
+		v := manager.PushRecord(item)
+		s += v.weight * float32(v.data.X)
+	}
+	manager.chan_out <- s
 }
 
+// a light weight, hash-able representation of a date
+type Date int64
+
+func MakeDate(time *time.Time) Date {
+	y, m, d := time.Date()
+	v := y*13*32 + int(m)*32 + d
+	return Date(v)
+}
+
+func (date Date) ToTime() time.Time {
+	dateInt := int(date)
+	d := dateInt % (13 * 32)
+	dateInt -= d
+	m := dateInt % 13
+	dateInt -= m
+	y := dateInt
+
+	return time.Date(y, time.Month(m), d, 0, 0, 0, 0, time.UTC)
+}
+
+type ManagerKeeper struct {
+	// keep a list of all the days
+	days []Date
+	// hashmap that get the ID (aka the order) from a date
+	dayToIndex map[Date]int
+	// nested dictionary of manager
+	Managers map[int]*map[Date]*Manager
+}
+
+func MakeManagerKeeper(data []DataRecord) ManagerKeeper {
+
+	// map the date to the index in the final array
+	dayToIndex := make(map[Date]int)
+
+	for _, e := range data {
+		start := MakeDate(&e.Start)
+		finish := MakeDate(&e.Finish)
+
+		dayToIndex[start] = 0
+		dayToIndex[finish] = 0
+	}
+
+	days := make([]Date, 0, len(dayToIndex))
+	for k := range dayToIndex {
+		days = append(days, k)
+	}
+
+	sort.Slice(days, func(i, j int) bool {
+		return int(days[i]) < int(days[j])
+	})
+
+	for i, v := range days {
+		dayToIndex[v] = i
+	}
+
+	managers := make(map[int]*map[Date]*Manager)
+
+	return ManagerKeeper{
+		days,
+		dayToIndex,
+		managers,
+	}
+}
+
+// get the manager, AND create a new one if not exist
+func (managerKeeper *ManagerKeeper) GetManager(id int, day Date) *Manager {
+
+	val, ok := managerKeeper.Managers[id]
+
+	if !ok {
+		new_map := make(map[Date]*Manager)
+		val = &new_map
+		managerKeeper.Managers[id] = val
+	}
+
+	val2, ok := (*val)[day]
+
+	if !ok {
+
+		start := day.ToTime()
+
+		finish := start.Add(ALMOST_A_DAY)
+
+		new_manager := MakeManager(id, day, start, finish)
+
+		val2 = &new_manager
+		(*val)[day] = val2
+	}
+	return val2
+}
+
+var ALMOST_A_DAY time.Duration
+
 func main() {
+
+	var err error
+	ALMOST_A_DAY, err = time.ParseDuration("23h59m59s")
+
+	if err != nil {
+		panic(err)
+	}
+
 	// get the data
 	data, err := GetData()
 	if err != nil {
