@@ -2,7 +2,12 @@
 
 Given the data in dataset.json
 ```json
- {"start":"2022-09-05 15:04:43.195098","finish":"2022-09-06 17:04:45.195098","id":"1","x":"5"},
+{
+    "start":"2022-09-05 15:04:43.195098",
+    "finish":"2022-09-06 17:04:45.195098",
+    "id":"1",
+    "x":"5"
+}
 ```
 
 you should find the value of x for every day and id, notin that
