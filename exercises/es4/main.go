@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -115,23 +116,25 @@ func MakeFilterDataRecord(dr DataRecord, start time.Time, finish time.Time) Filt
 }
 
 type Manager struct {
-	ID       int
-	Day      Date
-	Start    time.Time
-	Finish   time.Time
-	data     []FilteredDataRecord
-	chan_in  chan DataRecord
-	chan_out chan float32
+	ID                  int
+	Day                 Date
+	Start               time.Time
+	Finish              time.Time
+	data                []FilteredDataRecord
+	chan_in             chan DataRecord
+	chan_out            chan float32
+	computation_started bool
 }
 
 func MakeManager(id int, day Date, start time.Time, finish time.Time) Manager {
 	return Manager{
-		ID:       id,
-		Day:      day,
-		Start:    start,
-		Finish:   finish,
-		chan_in:  make(chan DataRecord),
-		chan_out: make(chan float32),
+		ID:                  id,
+		Day:                 day,
+		Start:               start,
+		Finish:              finish,
+		chan_in:             make(chan DataRecord),
+		chan_out:            make(chan float32),
+		computation_started: false,
 	}
 }
 
@@ -139,6 +142,15 @@ func (manager *Manager) PushRecord(record DataRecord) *FilteredDataRecord {
 	filtered_record := MakeFilterDataRecord(record, manager.Start, manager.Finish)
 	manager.data = append(manager.data, filtered_record)
 	return &manager.data[len(manager.data)-1]
+}
+
+func (manager *Manager) TryPushRecordAsync(record DataRecord) error {
+	if record.Start.After(manager.Finish) ||
+		record.Finish.Before(manager.Start) {
+		return errors.New("record outside this manager's duty")
+	}
+	manager.chan_in <- record
+	return nil
 }
 
 // get the output (synchronous)
@@ -160,22 +172,32 @@ func (manager *Manager) Compute() {
 	manager.chan_out <- s
 }
 
+func (manager *Manager) TryStartCompute() error {
+	if manager.computation_started {
+		return errors.New("computation already started")
+	}
+	manager.computation_started = true
+	go manager.Compute()
+	return nil
+}
+
 // a light weight, hash-able representation of a date
 type Date int64
 
 func MakeDate(time *time.Time) Date {
 	y, m, d := time.Date()
-	v := y*13*32 + int(m)*32 + d
+	m2 := int(m)
+	v := y*13*32 + m2*32 + d
 	return Date(v)
 }
 
 func (date Date) ToTime() time.Time {
 	dateInt := int(date)
-	d := dateInt % (13 * 32)
-	dateInt -= d
-	m := dateInt % 13
-	dateInt -= m
-	y := dateInt
+	y := dateInt / (13 * 32)
+	dateInt %= 13 * 32
+	m := dateInt / 32
+	dateInt %= 32
+	d := dateInt
 
 	return time.Date(y, time.Month(m), d, 0, 0, 0, 0, time.UTC)
 }
@@ -251,12 +273,73 @@ func (managerKeeper *ManagerKeeper) GetManager(id int, day Date) *Manager {
 	return val2
 }
 
+func (managerKeeper *ManagerKeeper) GetNextDay(date Date) (Date, error) {
+	index, ok := managerKeeper.dayToIndex[date]
+	if !ok {
+		return 0, errors.New("unable to find specified date")
+	}
+	index += 1
+	if index >= len(managerKeeper.days) {
+		return 0, errors.New("dey dose not have a successor")
+	}
+	return managerKeeper.days[index], nil
+}
+
+func (managerKeeper *ManagerKeeper) ProcessData(data []DataRecord) {
+
+	for _, d := range data {
+		id := d.ID
+		day := MakeDate(&d.Start)
+
+		// insert this record until it is no longer inside the time range of the manager
+		for {
+			manager := managerKeeper.GetManager(id, day)
+			manager.TryStartCompute()
+			err := manager.TryPushRecordAsync(d)
+			if err != nil {
+				break
+			}
+			day, err = managerKeeper.GetNextDay(day)
+			if err != nil {
+				break
+			}
+		}
+	}
+	managerKeeper.CloseAllChannels()
+}
+
+func (managerKeeper *ManagerKeeper) CloseAllChannels() {
+	for _, v := range managerKeeper.Managers {
+		for _, manager := range *v {
+			close(manager.chan_in)
+		}
+	}
+}
+
+func (managerKeeper *ManagerKeeper) PrintData() {
+
+	for id, v := range managerKeeper.Managers {
+		for day, manager := range *v {
+
+			day_fmt := day.ToTime()
+			x := <-manager.chan_out
+
+			fmt.Printf("Day: %v Id: %v X: %v\n", day_fmt, id, x)
+		}
+	}
+
+}
+
 var ALMOST_A_DAY time.Duration
 
 func main() {
 
 	var err error
 	ALMOST_A_DAY, err = time.ParseDuration("23h59m59s")
+
+	d := time.Date(2000, 10, 1, 0, 0, 0, 0, time.UTC)
+	x := MakeDate(&d)
+	x.ToTime()
 
 	if err != nil {
 		panic(err)
@@ -276,5 +359,9 @@ func main() {
 	for _, e := range data {
 		fmt.Println(e.Start)
 	}
+
+	manager := MakeManagerKeeper(data)
+	manager.ProcessData(data)
+	manager.PrintData()
 
 }
