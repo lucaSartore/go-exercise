@@ -1,11 +1,17 @@
 package main
 
+import "fmt"
+
 type PartialOrder[T any] interface {
 	Greater(other T) bool
 }
 
 type Number[T int | uint | int8 | uint8 | int16 | uint16 | int32 | uint32 | int64 | uint64 | float32 | float64] struct {
 	number T
+}
+
+func (e *Number[T]) String() string {
+	return fmt.Sprintf("%v", e.number)
 }
 
 func (a Number[T]) Greater(b Number[T]) bool {
@@ -22,6 +28,17 @@ type Node[T PartialOrder[T]] struct {
 	Element T
 	Left    *Node[T]
 	Right   *Node[T]
+}
+
+func (n *Node[T]) String() string {
+	if n == nil {
+		return "Null"
+	}
+
+	l := n.Left.String()
+	r := n.Right.String()
+
+	return fmt.Sprintf("{Value: %v, Left: %v, Right: %v}", n.Element, l, r)
 }
 
 func MakeNode[T PartialOrder[T]](item T) Node[T] {
@@ -52,4 +69,9 @@ func main() {
 	tree := MakeNode(MakeNumber(0))
 
 	tree.Insert(MakeNumber(4))
+
+	tree.Insert(MakeNumber(-1))
+	tree.Insert(MakeNumber(3))
+
+	fmt.Printf("Tree: %v", &tree)
 }
